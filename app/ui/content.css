@@ -1,0 +1,20 @@
+/* Ensure smooth transitions for body padding changes */
+body {
+  transition: padding-right 0.3s ease;
+  box-sizing: border-box;
+}
+
+html {
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
+/* Ensure sidebar container doesn't interfere with page layout */
+#plasmo-sidebar-container {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2147483647;
+  pointer-events: auto;
+}
+
