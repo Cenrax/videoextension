@@ -11,7 +11,7 @@ import {
 } from "../services";
 
 // Configuration
-const WS_URL = "ws://localhost:8000/api/v1/video-stream";
+const WS_URL = "ws://127.0.0.1:8000/api/v1/video-stream";
 const FRAME_RATE = 30;
 const MAX_SCREENSHOTS = 2;
 
