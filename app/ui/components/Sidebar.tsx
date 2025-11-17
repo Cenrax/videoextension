@@ -12,8 +12,30 @@ import {
 
 // Configuration
 const WS_URL = "ws://127.0.0.1:8000/api/v1/video-stream";
+const API_BASE_URL = "http://127.0.0.1:8000/api/v1";
 const FRAME_RATE = 30;
 const MAX_SCREENSHOTS = 2;
+
+type CapturedScreenshot = {
+  id: string;
+  dataUrl: string;
+  uploaded: boolean;
+  uploading: boolean;
+  backendPath?: string;
+  error?: string | null;
+};
+
+const createScreenshotItem = (dataUrl: string): CapturedScreenshot => ({
+  id:
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  dataUrl,
+  uploaded: false,
+  uploading: false,
+  backendPath: undefined,
+  error: null,
+});
 
 interface SidebarProps {
   isVisible: boolean;
@@ -30,7 +52,7 @@ export const Sidebar = ({
   const [isDetecting, setIsDetecting] = useState(false);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
-  const [screenshots, setScreenshots] = useState<string[]>([]);
+  const [screenshots, setScreenshots] = useState<CapturedScreenshot[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [frameCount, setFrameCount] = useState(0);
@@ -49,7 +71,10 @@ export const Sidebar = ({
       frameRate: FRAME_RATE,
       quality: 0.8,
     });
-    screenshotServiceRef.current = new ScreenshotService(MAX_SCREENSHOTS);
+    screenshotServiceRef.current = new ScreenshotService(
+      MAX_SCREENSHOTS,
+      `${API_BASE_URL}/screenshots`
+    );
 
     // Set up WebSocket message handler
     wsServiceRef.current.onMessage((message: WebSocketMessage) => {
@@ -251,28 +276,87 @@ export const Sidebar = ({
     );
 
     if (screenshot) {
-      setScreenshots((prev) => [screenshot, ...prev]);
+      setScreenshots((prev) => [createScreenshotItem(screenshot), ...prev]);
     } else {
       alert("Video stream not ready yet");
     }
   }, [screenshots.length, videoStream]);
 
   // Download screenshot
-  const handleDownloadScreenshot = useCallback((screenshot: string) => {
-    if (screenshotServiceRef.current) {
-      screenshotServiceRef.current.downloadScreenshot(screenshot);
-    }
-  }, []);
+  const handleDownloadScreenshot = useCallback(
+    (screenshot: CapturedScreenshot) => {
+      if (screenshotServiceRef.current) {
+        screenshotServiceRef.current.downloadScreenshot(screenshot.dataUrl);
+      }
+    },
+    []
+  );
 
   // Remove screenshot
-  const handleRemoveScreenshot = useCallback((index: number) => {
-    setScreenshots((prev) => prev.filter((_, i) => i !== index));
+  const handleRemoveScreenshot = useCallback((id: string) => {
+    setScreenshots((prev) => prev.filter((screenshot) => screenshot.id !== id));
   }, []);
 
   // Clear all screenshots
   const handleClearScreenshots = useCallback(() => {
     setScreenshots([]);
   }, []);
+
+  // Send screenshot to backend
+  const handleSendScreenshot = useCallback(
+    async (screenshot: CapturedScreenshot) => {
+      if (!screenshotServiceRef.current) {
+        return;
+      }
+
+      setScreenshots((prev) =>
+        prev.map((item) =>
+          item.id === screenshot.id
+            ? { ...item, uploading: true, error: null }
+            : item
+        )
+      );
+
+      try {
+        const response = await screenshotServiceRef.current.uploadScreenshot(
+          screenshot.dataUrl,
+          {
+            source: window.location.href,
+            metadata: {
+              frameCount,
+              capturedAt: new Date().toISOString(),
+            },
+          }
+        );
+
+        setScreenshots((prev) =>
+          prev.map((item) =>
+            item.id === screenshot.id
+              ? {
+                  ...item,
+                  uploading: false,
+                  uploaded: true,
+                  backendPath: response.file_path || response.file_name,
+                }
+              : item
+          )
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to send screenshot";
+        console.error("Screenshot upload failed:", error);
+        setScreenshots((prev) =>
+          prev.map((item) =>
+            item.id === screenshot.id
+              ? { ...item, uploading: false, error: message }
+              : item
+          )
+        );
+        alert(message);
+      }
+    },
+    [frameCount]
+  );
 
   if (!isVisible) {
     return null;
@@ -569,17 +653,18 @@ export const Sidebar = ({
               </div>
               {screenshots.map((screenshot, index) => (
                 <div
-                  key={index}
+                  key={screenshot.id}
                   style={{
-                    marginBottom: "8px",
+                    marginBottom: "12px",
                     borderRadius: "4px",
                     overflow: "hidden",
                     border: "1px solid #333",
                     position: "relative",
+                    backgroundColor: "#121212",
                   }}
                 >
                   <img
-                    src={screenshot}
+                    src={screenshot.dataUrl}
                     alt={`Screenshot ${index + 1}`}
                     style={{
                       width: "100%",
@@ -589,7 +674,7 @@ export const Sidebar = ({
                     onClick={() => handleDownloadScreenshot(screenshot)}
                   />
                   <button
-                    onClick={() => handleRemoveScreenshot(index)}
+                    onClick={() => handleRemoveScreenshot(screenshot.id)}
                     style={{
                       position: "absolute",
                       top: "4px",
@@ -609,6 +694,83 @@ export const Sidebar = ({
                   >
                     ✕
                   </button>
+                  <div
+                    style={{
+                      padding: "8px",
+                      borderTop: "1px solid #333",
+                      display: "flex",
+                      gap: "8px",
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    <button
+                      onClick={() => handleSendScreenshot(screenshot)}
+                      disabled={screenshot.uploaded || screenshot.uploading}
+                      style={{
+                        flex: 1,
+                        padding: "8px",
+                        borderRadius: "4px",
+                        border: "none",
+                        backgroundColor: screenshot.uploaded
+                          ? "#2f855a"
+                          : screenshot.uploading
+                          ? "#4a5568"
+                          : "#3182ce",
+                        color: "#fff",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        cursor:
+                          screenshot.uploaded || screenshot.uploading
+                            ? "not-allowed"
+                            : "pointer",
+                        transition: "background-color 0.2s",
+                      }}
+                    >
+                      {screenshot.uploaded
+                        ? "Sent"
+                        : screenshot.uploading
+                        ? "Sending..."
+                        : "Send to Backend"}
+                    </button>
+                    <button
+                      onClick={() => handleDownloadScreenshot(screenshot)}
+                      style={{
+                        padding: "8px",
+                        borderRadius: "4px",
+                        border: "1px solid #4a9eff",
+                        backgroundColor: "transparent",
+                        color: "#4a9eff",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Download
+                    </button>
+                  </div>
+                  {screenshot.backendPath && (
+                    <div
+                      style={{
+                        padding: "0 8px 8px",
+                        fontSize: "11px",
+                        color: "#9ae6b4",
+                      }}
+                    >
+                      Stored as: {screenshot.backendPath}
+                    </div>
+                  )}
+                  {screenshot.error && (
+                    <div
+                      style={{
+                        padding: "0 8px 8px",
+                        fontSize: "11px",
+                        color: "#feb2b2",
+                      }}
+                    >
+                      {screenshot.error}
+                    </div>
+                  )}
                 </div>
               ))}
               {screenshots.length > 0 && (

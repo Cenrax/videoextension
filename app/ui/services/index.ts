@@ -15,7 +15,11 @@ export type {
 export { FrameCaptureService } from "./frameCaptureService";
 export type { FrameCaptureConfig } from "./frameCaptureService";
 
-export { ScreenshotService } from "./screenshotService";
+export {
+  ScreenshotService,
+  type ScreenshotUploadResult,
+  type ScreenshotUploadOptions,
+} from "./screenshotService";
 
 export { DomService } from "./domService";
 

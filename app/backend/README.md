@@ -73,6 +73,10 @@ gunicorn -k uvicorn.workers.UvicornWorker app.main:app
 - Hot reload is enabled during development
 - The main application entry point is `app/main.py`
 
+## API Endpoints
+
+- `POST /api/v1/screenshots`: Accepts a base64 data URL screenshot payload from the browser extension and persists it under `storage/screenshots/`
+
 ## Troubleshooting
 
 1. If you encounter issues with virtual environment activation in VS Code:

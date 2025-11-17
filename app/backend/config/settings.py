@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     DEBUG: Optional[bool] = True
     API_V1_STR: Optional[str] = "/api/v1"
     PROJECT_NAME: Optional[str] = "Video verifier"
+    SCREENSHOT_STORAGE_DIR: Optional[str] = "temp/screenshots"
     
     
     @field_validator("ENV")

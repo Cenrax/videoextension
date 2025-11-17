@@ -2,11 +2,28 @@
  * Service for managing screenshots from video streams.
  */
 
+export interface ScreenshotUploadResult {
+  status: string;
+  file_name: string;
+  file_path?: string;
+  size_bytes?: number;
+  stored_at?: string;
+  source?: string | null;
+}
+
+export interface ScreenshotUploadOptions {
+  source?: string;
+  metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+
 export class ScreenshotService {
   private maxScreenshots: number;
+  private uploadEndpoint?: string;
 
-  constructor(maxScreenshots: number = 2) {
+  constructor(maxScreenshots: number = 2, uploadEndpoint?: string) {
     this.maxScreenshots = maxScreenshots;
+    this.uploadEndpoint = uploadEndpoint;
   }
 
   /**
@@ -38,6 +55,38 @@ export class ScreenshotService {
     link.download = filename || `screenshot-${Date.now()}.png`;
     link.href = dataUrl;
     link.click();
+  }
+
+  /**
+   * Upload screenshot to backend if endpoint configured.
+   */
+  async uploadScreenshot(
+    dataUrl: string,
+    options?: ScreenshotUploadOptions
+  ): Promise<ScreenshotUploadResult> {
+    if (!this.uploadEndpoint) {
+      throw new Error("Upload endpoint is not configured");
+    }
+
+    const response = await fetch(this.uploadEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        data_url: dataUrl,
+        source: options?.source,
+        metadata: options?.metadata,
+      }),
+      signal: options?.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      throw new Error(errorBody.detail || "Failed to upload screenshot");
+    }
+
+    return (await response.json()) as ScreenshotUploadResult;
   }
 
   /**
