@@ -103,6 +103,12 @@ class WebSocketService:
                 # Process the frame using video service
                 result = await video_service.process_frame(frame_data)
                 
+                # If it's an alert, return the alert immediately
+                if result.get("status") == "alert":
+                    logger.warning(f"🚨 Sending alert to frontend: {result}")
+                    return result
+                
+                # Otherwise return normal frame acknowledgment
                 return {
                     "status": "received",
                     "frame_count": result["frame_number"]
@@ -177,6 +183,11 @@ class WebSocketService:
         # Handle binary frames
         if "bytes" in data:
             result = await self.handle_binary_frame(websocket, data["bytes"], video_service)
+            
+            # If it's an alert, send it immediately
+            if result.get("status") == "alert":
+                logger.warning(f"🚨 Sending alert to frontend: {result}")
+                return result
             
             # Send acknowledgment periodically
             if result["frame_number"] % 30 == 0:

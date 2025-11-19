@@ -23,3 +23,15 @@ export {
 
 export { DomService } from "./domService";
 
+export { AudioStreamService, audioStreamService } from "./audioStreamService";
+export type {
+  AudioStreamConfig,
+  AudioAnalysisResult,
+} from "./audioStreamService";
+
+export {
+  AudioWebSocketService,
+  audioWebSocketService,
+} from "./audioWebSocketService";
+export type { AudioWebSocketConfig } from "./audioWebSocketService";
+
