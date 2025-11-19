@@ -73,6 +73,7 @@ export const Sidebar = ({
     confidence: number;
     timestamp: number;
   } | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -289,7 +290,7 @@ export const Sidebar = ({
     setWsConnected(false);
   }, []);
 
-  // Analyze frame (capture and automatically verify)
+  // Independent analyze frame - finds any video on the page
   const handleAnalyzeFrame = useCallback(async () => {
     if (!screenshotServiceRef.current) {
       return;
@@ -302,19 +303,45 @@ export const Sidebar = ({
       return;
     }
 
-    if (!videoRef.current || !videoStream) {
-      alert("No video stream available");
+    // Find any video element on the page
+    const videoElements = document.querySelectorAll('video');
+    let targetVideo: HTMLVideoElement | null = null;
+
+    // Prioritize playing videos
+    for (const video of Array.from(videoElements)) {
+      if (!video.paused && video.readyState >= 2) {
+        targetVideo = video;
+        break;
+      }
+    }
+
+    // If no playing video, use any video with loaded data
+    if (!targetVideo) {
+      for (const video of Array.from(videoElements)) {
+        if (video.readyState >= 2) {
+          targetVideo = video;
+          break;
+        }
+      }
+    }
+
+    if (!targetVideo) {
+      alert("No video found on this page. Please make sure a video is playing.");
       return;
     }
 
+    console.log("Found video element:", targetVideo);
+    
+    // Capture screenshot from the found video
     const screenshotDataUrl = screenshotServiceRef.current.captureScreenshot(
-      videoRef.current
+      targetVideo
     );
 
     if (screenshotDataUrl) {
       const newScreenshot = createScreenshotItem(screenshotDataUrl);
       // Add to state with verifying flag
       setScreenshots((prev) => [{ ...newScreenshot, verifying: true }, ...prev]);
+      setIsAnalyzing(true);
       
       // Automatically verify the frame
       try {
@@ -340,11 +367,27 @@ export const Sidebar = ({
 
         // Extract analysis from nested structure
         const analysis = result.deepfake_analysis || result;
-        const verdict = analysis.overall_verdict || "unknown";
-        const confidence = analysis.confidence_score || analysis.confidence || 0;
         
-        // Determine if deepfake (suspicious verdicts: "suspicious", "likely_deepfake", "deepfake")
-        const isDeepfake = ["suspicious", "likely_deepfake", "deepfake"].includes(verdict.toLowerCase());
+        // Handle both comprehensive and quick analysis formats
+        let isDeepfake = false;
+        let confidence = 0;
+        
+        if (analysis.overall_verdict) {
+          // Comprehensive analysis format
+          const verdict = analysis.overall_verdict;
+          confidence = analysis.confidence_score || 0;
+          isDeepfake = ["suspicious", "likely_deepfake", "deepfake"].includes(verdict.toLowerCase());
+        } else if (analysis.is_suspicious !== undefined) {
+          // Quick analysis format
+          isDeepfake = analysis.is_suspicious;
+          confidence = analysis.confidence || 0;
+        } else {
+          // Fallback
+          confidence = analysis.confidence_score || analysis.confidence || 0;
+          isDeepfake = confidence > 0.7;
+        }
+        
+        console.log(`Parsed - Deepfake: ${isDeepfake}, Confidence: ${confidence}`);
 
         // Update latest analysis state for WebSocket status card
         setLatestAnalysis({
@@ -353,7 +396,9 @@ export const Sidebar = ({
           timestamp: Date.now()
         });
         
-        console.log(`Analysis: ${verdict}, Deepfake: ${isDeepfake}, Confidence: ${confidence}`);
+        setIsAnalyzing(false);
+        
+        console.log("✅ Analysis state updated successfully!");
 
         // Update with verification result
         setScreenshots((prev) =>
@@ -370,7 +415,8 @@ export const Sidebar = ({
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Analysis failed";
-        console.error("Frame analysis failed:", error);
+        console.error("❌ Frame analysis failed:", error);
+        setIsAnalyzing(false);
         setScreenshots((prev) =>
           prev.map((item) =>
             item.id === newScreenshot.id
@@ -378,10 +424,13 @@ export const Sidebar = ({
               : item
           )
         );
-        alert(message);
+        alert(`Analysis Error: ${message}`);
       }
+    } else {
+      console.error("❌ Failed to capture screenshot from video");
+      alert("Failed to capture frame from video");
     }
-  }, [videoStream, screenshots.length, frameCount]);
+  }, [screenshots.length, frameCount]);
 
   // Download screenshot
   const handleDownloadScreenshot = useCallback(
@@ -668,6 +717,136 @@ export const Sidebar = ({
             </div>
           )}
           
+          {/* Quick Frame Analysis Section - Always Available */}
+          <div style={{ marginBottom: "24px" }}>
+            <h2 style={{ 
+              marginTop: 0, 
+              marginBottom: "16px", 
+              fontSize: "18px",
+              fontWeight: 700,
+              color: "#7c3aed",
+              textShadow: "0 0 12px rgba(124, 58, 237, 0.4)",
+              letterSpacing: "0.5px"
+            }}>
+              📸 Quick Frame Analysis
+            </h2>
+
+            {/* Loading Indicator */}
+            {isAnalyzing && !latestAnalysis && (
+              <div
+                style={{
+                  marginBottom: "16px",
+                  padding: "16px",
+                  background: "linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(99, 102, 241, 0.3) 100%)",
+                  borderRadius: "10px",
+                  border: "2px solid rgba(124, 58, 237, 0.5)",
+                  boxShadow: "0 0 24px rgba(124, 58, 237, 0.3)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: "13px", color: "#7c3aed", fontWeight: 700, marginBottom: "8px" }}>
+                  🤖 Analyzing with Guardian AI...
+                </div>
+                <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                  Detecting deepfake patterns
+                </div>
+              </div>
+            )}
+
+            {/* Analysis Status Card */}
+            {latestAnalysis && !isAnalyzing && (
+              <div
+                style={{
+                  marginBottom: "16px",
+                  padding: "16px",
+                  background: "linear-gradient(135deg, rgba(26, 33, 66, 0.6) 0%, rgba(21, 27, 61, 0.8) 100%)",
+                  borderRadius: "10px",
+                  border: `2px solid ${latestAnalysis.isDeepfake ? "rgba(239, 68, 68, 0.5)" : "rgba(16, 185, 129, 0.5)"}`,
+                  boxShadow: latestAnalysis.isDeepfake 
+                    ? "0 0 24px rgba(239, 68, 68, 0.4)" 
+                    : "0 0 24px rgba(16, 185, 129, 0.4)",
+                  transition: "all 0.3s ease",
+                }}
+              >
+                <div style={{ fontSize: "13px", marginBottom: "10px", color: "#94a3b8", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{
+                    width: "10px",
+                    height: "10px",
+                    borderRadius: "50%",
+                    backgroundColor: latestAnalysis.isDeepfake ? "#ef4444" : "#10b981",
+                    boxShadow: latestAnalysis.isDeepfake
+                      ? "0 0 12px rgba(239, 68, 68, 0.8)" 
+                      : "0 0 12px rgba(16, 185, 129, 0.8)",
+                    animation: "pulse 2s ease-in-out infinite"
+                  }}></span>
+                  <span style={{ fontWeight: 700 }}>Analysis Result:</span>
+                  <span
+                    style={{
+                      color: latestAnalysis.isDeepfake ? "#ef4444" : "#10b981",
+                      fontWeight: 700,
+                      textShadow: latestAnalysis.isDeepfake
+                        ? "0 0 8px rgba(239, 68, 68, 0.5)" 
+                        : "0 0 8px rgba(16, 185, 129, 0.5)",
+                    }}
+                  >
+                    {latestAnalysis.isDeepfake ? "🚨 DEEPFAKE" : "✅ AUTHENTIC"}
+                  </span>
+                </div>
+                <div style={{ fontSize: "13px", color: "#94a3b8", fontFamily: "monospace", marginTop: "8px" }}>
+                  Confidence: <span style={{ 
+                    color: latestAnalysis.isDeepfake ? "#ef4444" : "#10b981", 
+                    fontWeight: 700 
+                  }}>
+                    {(latestAnalysis.confidence * 100).toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Analyze Frame Button */}
+            <button
+              onClick={handleAnalyzeFrame}
+              disabled={screenshots.length >= MAX_SCREENSHOTS}
+              style={{
+                width: "100%",
+                padding: "14px",
+                marginBottom: "12px",
+                borderRadius: "10px",
+                border: "2px solid rgba(124, 58, 237, 0.3)",
+                background: screenshots.length >= MAX_SCREENSHOTS
+                  ? "linear-gradient(135deg, rgba(74, 85, 104, 0.5) 0%, rgba(45, 55, 72, 0.5) 100%)"
+                  : "linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(99, 102, 241, 0.2) 100%)",
+                color: screenshots.length >= MAX_SCREENSHOTS ? "#64748b" : "#7c3aed",
+                fontSize: "15px",
+                fontWeight: 700,
+                cursor: screenshots.length >= MAX_SCREENSHOTS ? "not-allowed" : "pointer",
+                transition: "all 0.3s",
+                boxSizing: "border-box",
+                boxShadow: screenshots.length >= MAX_SCREENSHOTS ? "none" : "0 0 20px rgba(124, 58, 237, 0.3)",
+                textShadow: screenshots.length >= MAX_SCREENSHOTS ? "none" : "0 0 8px rgba(124, 58, 237, 0.5)",
+                letterSpacing: "0.5px",
+              }}
+              onMouseEnter={(e) => {
+                if (screenshots.length < MAX_SCREENSHOTS) {
+                  e.currentTarget.style.boxShadow = "0 0 30px rgba(124, 58, 237, 0.5)";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (screenshots.length < MAX_SCREENSHOTS) {
+                  e.currentTarget.style.boxShadow = "0 0 20px rgba(124, 58, 237, 0.3)";
+                  e.currentTarget.style.transform = "translateY(0)";
+                }
+              }}
+            >
+              🔍 Analyze Current Frame
+            </button>
+
+            <div style={{ fontSize: "11px", color: "#64748b", textAlign: "center", lineHeight: "1.5" }}>
+              Analyzes any video playing on this page
+            </div>
+          </div>
+          
           <h2 style={{ 
             marginTop: 0, 
             marginBottom: "20px", 
@@ -755,7 +934,7 @@ export const Sidebar = ({
             </button>
           )}
 
-          {/* Analysis Status Card */}
+          {/* WebSocket Status Card */}
           {videoStream && (
             <div
               style={{
@@ -763,88 +942,41 @@ export const Sidebar = ({
                 padding: "16px",
                 background: "linear-gradient(135deg, rgba(26, 33, 66, 0.6) 0%, rgba(21, 27, 61, 0.8) 100%)",
                 borderRadius: "10px",
-                border: latestAnalysis 
-                  ? `2px solid ${latestAnalysis.isDeepfake ? "rgba(239, 68, 68, 0.5)" : "rgba(16, 185, 129, 0.5)"}`
-                  : `2px solid ${wsConnected ? "rgba(16, 185, 129, 0.3)" : "rgba(148, 163, 184, 0.3)"}`,
-                boxShadow: latestAnalysis
-                  ? latestAnalysis.isDeepfake 
-                    ? "0 0 24px rgba(239, 68, 68, 0.4)" 
-                    : "0 0 24px rgba(16, 185, 129, 0.4)"
-                  : wsConnected 
-                    ? "0 0 20px rgba(16, 185, 129, 0.2)" 
-                    : "0 0 20px rgba(148, 163, 184, 0.2)",
+                border: `2px solid ${wsConnected ? "rgba(16, 185, 129, 0.3)" : "rgba(148, 163, 184, 0.3)"}`,
+                boxShadow: wsConnected 
+                  ? "0 0 20px rgba(16, 185, 129, 0.2)" 
+                  : "0 0 20px rgba(148, 163, 184, 0.2)",
                 transition: "all 0.3s ease",
               }}
             >
-              {/* Analysis Result Display */}
-              {latestAnalysis ? (
-                <>
-                  <div style={{ fontSize: "13px", marginBottom: "10px", color: "#94a3b8", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{
-                      width: "10px",
-                      height: "10px",
-                      borderRadius: "50%",
-                      backgroundColor: latestAnalysis.isDeepfake ? "#ef4444" : "#10b981",
-                      boxShadow: latestAnalysis.isDeepfake
-                        ? "0 0 12px rgba(239, 68, 68, 0.8)" 
-                        : "0 0 12px rgba(16, 185, 129, 0.8)",
-                      animation: "pulse 2s ease-in-out infinite"
-                    }}></span>
-                    <span style={{ fontWeight: 700 }}>Analysis Status:</span>
-                    <span
-                      style={{
-                        color: latestAnalysis.isDeepfake ? "#ef4444" : "#10b981",
-                        fontWeight: 700,
-                        textShadow: latestAnalysis.isDeepfake
-                          ? "0 0 8px rgba(239, 68, 68, 0.5)" 
-                          : "0 0 8px rgba(16, 185, 129, 0.5)",
-                      }}
-                    >
-                      {latestAnalysis.isDeepfake ? "🚨 DEEPFAKE DETECTED" : "✅ AUTHENTIC"}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: "13px", color: "#94a3b8", fontFamily: "monospace", marginTop: "8px" }}>
-                    Confidence: <span style={{ 
-                      color: latestAnalysis.isDeepfake ? "#ef4444" : "#10b981", 
-                      fontWeight: 700 
-                    }}>
-                      {(latestAnalysis.confidence * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  {/* WebSocket Status when no analysis yet */}
-                  <div style={{ fontSize: "13px", marginBottom: "10px", color: "#94a3b8", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      backgroundColor: wsConnected ? "#10b981" : "#94a3b8",
-                      boxShadow: wsConnected 
-                        ? "0 0 8px rgba(16, 185, 129, 0.6)" 
-                        : "none",
-                      animation: wsConnected ? "pulse 2s ease-in-out infinite" : "none"
-                    }}></span>
-                    WebSocket Status:{" "}
-                    <span
-                      style={{
-                        color: wsConnected ? "#10b981" : "#94a3b8",
-                        fontWeight: 700,
-                        textShadow: wsConnected 
-                          ? "0 0 8px rgba(16, 185, 129, 0.5)" 
-                          : "none",
-                      }}
-                    >
-                      {wsConnected ? "Connected" : "Ready"}
-                    </span>
-                  </div>
-                  {isStreaming && (
-                    <div style={{ fontSize: "13px", color: "#94a3b8", fontFamily: "monospace" }}>
-                      Frames Sent: <span style={{ color: "#00d4ff", fontWeight: 700 }}>{frameCount}</span>
-                    </div>
-                  )}
-                </>
+              <div style={{ fontSize: "13px", marginBottom: "10px", color: "#94a3b8", display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  backgroundColor: wsConnected ? "#10b981" : "#94a3b8",
+                  boxShadow: wsConnected 
+                    ? "0 0 8px rgba(16, 185, 129, 0.6)" 
+                    : "none",
+                  animation: wsConnected ? "pulse 2s ease-in-out infinite" : "none"
+                }}></span>
+                WebSocket Status:{" "}
+                <span
+                  style={{
+                    color: wsConnected ? "#10b981" : "#94a3b8",
+                    fontWeight: 700,
+                    textShadow: wsConnected 
+                      ? "0 0 8px rgba(16, 185, 129, 0.5)" 
+                      : "none",
+                  }}
+                >
+                  {wsConnected ? "Connected" : "Ready"}
+                </span>
+              </div>
+              {isStreaming && (
+                <div style={{ fontSize: "13px", color: "#94a3b8", fontFamily: "monospace" }}>
+                  Frames Sent: <span style={{ color: "#00d4ff", fontWeight: 700 }}>{frameCount}</span>
+                </div>
               )}
             </div>
           )}
@@ -935,7 +1067,7 @@ export const Sidebar = ({
               />
 
               {/* Analyze Frame Button */}
-              <button
+              {/* <button
                 onClick={handleAnalyzeFrame}
                 disabled={screenshots.length >= MAX_SCREENSHOTS}
                 style={{
@@ -966,7 +1098,7 @@ export const Sidebar = ({
                 }}
               >
                 🔍 Analyze Frame ({screenshots.length}/{MAX_SCREENSHOTS})
-              </button>
+              </button> */}
             </div>
           )}
 
